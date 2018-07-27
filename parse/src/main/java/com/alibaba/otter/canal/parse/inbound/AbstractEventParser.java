@@ -90,9 +90,9 @@ public abstract class AbstractEventParser<EVENT> extends AbstractCanalLifeCycle 
 
     protected boolean                                isGTIDMode                 = false;                                   // 是否是GTID模式
     protected boolean                                parallel                   = true;                                    // 是否开启并行解析模式
-    protected int                                    parallelThreadSize         = Runtime.getRuntime()
+    protected Integer                                parallelThreadSize         = Runtime.getRuntime()
                                                                                     .availableProcessors() * 60 / 100;     // 60%的能力跑解析,剩余部分处理网络
-    protected int                                    parallelBufferSize         = 16 * parallelThreadSize;
+    protected int                                    parallelBufferSize         = 256;                                     // 必须为2的幂
     protected MultiStageCoprocessor                  multiStageCoprocessor;
 
     protected abstract BinlogParser buildParser();
@@ -303,7 +303,12 @@ public abstract class AbstractEventParser<EVENT> extends AbstractCanalLifeCycle 
                     transactionBuffer.reset();// 重置一下缓冲队列，重新记录数据
                     binlogParser.reset();// 重新置位
                     if (multiStageCoprocessor != null) {
-                        multiStageCoprocessor.reset();
+                        // 处理 RejectedExecutionException
+                        try {
+                            multiStageCoprocessor.reset();
+                        } catch (Throwable t) {
+                            logger.debug("multi processor rejected:", t);
+                        }
                     }
 
                     if (running) {
@@ -331,6 +336,11 @@ public abstract class AbstractEventParser<EVENT> extends AbstractCanalLifeCycle 
         stopHeartBeat(); // 先停止心跳
         parseThread.interrupt(); // 尝试中断
         eventSink.interrupt();
+
+        if (multiStageCoprocessor != null && multiStageCoprocessor.isStart()) {
+            multiStageCoprocessor.stop();
+        }
+
         try {
             parseThread.join();// 等待其结束
         } catch (InterruptedException e) {
@@ -342,10 +352,6 @@ public abstract class AbstractEventParser<EVENT> extends AbstractCanalLifeCycle 
         }
         if (transactionBuffer.isStart()) {
             transactionBuffer.stop();
-        }
-
-        if (multiStageCoprocessor != null && multiStageCoprocessor.isStart()) {
-            multiStageCoprocessor.stop();
         }
     }
 
@@ -595,11 +601,13 @@ public abstract class AbstractEventParser<EVENT> extends AbstractCanalLifeCycle 
         return parallelThreadSize;
     }
 
-    public void setParallelThreadSize(int parallelThreadSize) {
-        this.parallelThreadSize = parallelThreadSize;
+    public void setParallelThreadSize(Integer parallelThreadSize) {
+        if (parallelThreadSize != null) {
+            this.parallelThreadSize = parallelThreadSize;
+        }
     }
 
-    public int getParallelBufferSize() {
+    public Integer getParallelBufferSize() {
         return parallelBufferSize;
     }
 
