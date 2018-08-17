@@ -34,6 +34,7 @@ import com.alibaba.otter.canal.instance.core.CanalInstanceGenerator;
 import com.alibaba.otter.canal.instance.manager.CanalConfigClient;
 import com.alibaba.otter.canal.instance.manager.ManagerCanalInstanceGenerator;
 import com.alibaba.otter.canal.instance.spring.SpringCanalInstanceGenerator;
+import com.alibaba.otter.canal.parse.CanalEventParser;
 import com.alibaba.otter.canal.server.embedded.CanalServerWithEmbedded;
 import com.alibaba.otter.canal.server.exception.CanalServerException;
 import com.alibaba.otter.canal.server.netty.CanalServerWithNetty;
@@ -97,6 +98,14 @@ public class CanalController {
         port = Integer.valueOf(getProperty(properties, CanalConstants.CANAL_PORT));
         embededCanalServer = CanalServerWithEmbedded.instance();
         embededCanalServer.setCanalInstanceGenerator(instanceGenerator);// 设置自定义的instanceGenerator
+        try {
+            int metricsPort = Integer.valueOf(getProperty(properties, CanalConstants.CANAL_METRICS_PULL_PORT));
+            embededCanalServer.setMetricsPort(metricsPort);
+        } catch (NumberFormatException e) {
+            logger.info("No valid metrics server port found, use default 11112.");
+            embededCanalServer.setMetricsPort(11112);
+        }
+        
         String canalWithoutNetty = getProperty(properties, CanalConstants.CANAL_WITHOUT_NETTY);
         if (canalWithoutNetty == null || "false".equals(canalWithoutNetty)) {
             canalServer = CanalServerWithNetty.instance();
@@ -303,7 +312,7 @@ public class CanalController {
                     return instanceGenerator.generate(destination);
                 } else if (config.getMode().isSpring()) {
                     SpringCanalInstanceGenerator instanceGenerator = new SpringCanalInstanceGenerator();
-                    synchronized (this) {
+                    synchronized (CanalEventParser.class) {
                         try {
                             // 设置当前正在加载的通道，加载spring查找文件时会用到该变量
                             System.setProperty(CanalConstants.CANAL_DESTINATION_PROPERTY, destination);
@@ -379,7 +388,18 @@ public class CanalController {
     }
 
     private String getProperty(Properties properties, String key) {
-        return StringUtils.trim(properties.getProperty(StringUtils.trim(key)));
+        key = StringUtils.trim(key);
+        String value = System.getProperty(key);
+
+        if (value == null) {
+            value = System.getenv(key);
+        }
+
+        if (value == null) {
+            value = properties.getProperty(key);
+        }
+
+        return StringUtils.trim(value);
     }
 
     public void start() throws Throwable {
